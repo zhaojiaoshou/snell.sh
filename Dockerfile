@@ -1,6 +1,7 @@
 # =========================================
 # Snell Server Docker 镜像
 # 支持多架构: amd64 / arm64 / armv7
+# 注意: Snell v6 仅支持 amd64 / arm64，不支持 armv7
 # =========================================
 
 ARG SNELL_VERSION=v5.0.1
@@ -17,11 +18,14 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# 根据目标架构选择下载链接
+# 根据目标架构选择下载链接 (Snell v6 不支持 arm/armv7l)
 RUN case "${TARGETARCH}" in \
         "amd64")  ARCH_SUFFIX="amd64" ;; \
         "arm64")  ARCH_SUFFIX="aarch64" ;; \
-        "arm")    ARCH_SUFFIX="armv7l" ;; \
+        "arm")    case "${SNELL_VERSION}" in \
+                      v6*) echo "Error: Snell v6 does not support armv7l architecture" && exit 1 ;; \
+                      *)   ARCH_SUFFIX="armv7l" ;; \
+                  esac ;; \
         *)        echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
     esac && \
     curl -L -o snell.zip "https://dl.nssurge.com/snell/snell-server-${SNELL_VERSION}-linux-${ARCH_SUFFIX}.zip" && \

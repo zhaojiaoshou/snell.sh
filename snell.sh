@@ -14,7 +14,7 @@ CYAN='\033[0;36m'
 RESET='\033[0m'
 
 #当前版本号
-current_version="4.8"
+current_version="5.0"
 
 # 全局变量：选择的 Snell 版本
 SNELL_VERSION_CHOICE=""
@@ -875,14 +875,98 @@ ensure_main_port_free_for_socket() {
     return 1
 }
 
-# 开放端口 (ufw 和 iptables)
+# 保存 nftables 规则
+save_nftables_rules() {
+    if ! command -v nft &> /dev/null; then
+        return
+    fi
+
+    if [ -f "/etc/nftables.conf" ]; then
+        nft list ruleset > /etc/nftables.conf 2>/dev/null || true
+        systemctl enable nftables >/dev/null 2>&1 || true
+        echo -e "${GREEN}nftables 规则已保存${RESET}"
+    elif [ -f "/etc/sysconfig/nftables.conf" ]; then
+        nft list ruleset > /etc/sysconfig/nftables.conf 2>/dev/null || true
+        systemctl enable nftables >/dev/null 2>&1 || true
+        echo -e "${GREEN}nftables 规则已保存${RESET}"
+    else
+        echo -e "${YELLOW}未找到 nftables 持久化配置文件，端口规则已在当前运行环境生效${RESET}"
+    fi
+}
+
+# 在 nftables 中开放端口
+open_nftables_port() {
+    local PORT=$1
+    local chains
+    local chain_opened=false
+
+    if ! command -v nft &> /dev/null; then
+        return
+    fi
+
+    echo -e "${CYAN}在 nftables 中开放端口 $PORT${RESET}"
+
+    chains=$(nft -a list ruleset 2>/dev/null | awk '
+        $1 == "table" {
+            family=$2
+            table=$3
+            gsub(/[{}]/, "", table)
+        }
+        $1 == "chain" {
+            chain=$2
+            gsub(/[{}]/, "", chain)
+            in_chain=1
+            next
+        }
+        in_chain && /type filter/ && /hook input/ {
+            print family " " table " " chain
+        }
+        in_chain && /^[[:space:]]*}/ {
+            in_chain=0
+        }
+    ')
+
+    while read -r family table chain; do
+        [ -z "$family" ] && continue
+
+        if ! nft list chain "$family" "$table" "$chain" 2>/dev/null | grep -q "tcp dport $PORT .*accept"; then
+            nft insert rule "$family" "$table" "$chain" tcp dport "$PORT" accept 2>/dev/null || true
+        fi
+        if ! nft list chain "$family" "$table" "$chain" 2>/dev/null | grep -q "udp dport $PORT .*accept"; then
+            nft insert rule "$family" "$table" "$chain" udp dport "$PORT" accept 2>/dev/null || true
+        fi
+        chain_opened=true
+    done << EOF
+$chains
+EOF
+
+    if [ "$chain_opened" = false ]; then
+        nft add table inet snell_filter 2>/dev/null || true
+        nft list chain inet snell_filter input >/dev/null 2>&1 || nft add chain inet snell_filter input '{ type filter hook input priority -5; policy accept; }'
+        if ! nft list chain inet snell_filter input 2>/dev/null | grep -q "tcp dport $PORT .*accept"; then
+            nft add rule inet snell_filter input tcp dport "$PORT" accept 2>/dev/null || true
+        fi
+        if ! nft list chain inet snell_filter input 2>/dev/null | grep -q "udp dport $PORT .*accept"; then
+            nft add rule inet snell_filter input udp dport "$PORT" accept 2>/dev/null || true
+        fi
+    fi
+
+    save_nftables_rules
+}
+
+# 开放端口 (ufw、nftables 和 iptables)
 open_port() {
     local PORT=$1
+    local ufw_active=false
+
     # 检查 ufw 是否已安装
     if command -v ufw &> /dev/null; then
         echo -e "${CYAN}在 UFW 中开放端口 $PORT${RESET}"
         ufw allow "$PORT"/tcp
         ufw allow "$PORT"/udp
+        if ufw status 2>/dev/null | grep -qw "active"; then
+            ufw_active=true
+        fi
     fi
 
     # 检查 iptables 是否已安装
@@ -898,6 +982,10 @@ open_port() {
         
         # 尝试保存规则，如果失败则不中断脚本
         iptables-save > /etc/iptables/rules.v4 || true
+    fi
+
+    if [ "$ufw_active" = false ]; then
+        open_nftables_port "$PORT"
     fi
 }
 

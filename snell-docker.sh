@@ -3,7 +3,7 @@
 # 作者: jinqians (Docker版)
 # 创建日期: 2026年3月5日
 # 描述: 使用 Docker 在 Alpine | Debian | CentOS…… Linux 上安装和管理 Snell 代理
-#       避免宿主机兼容性问题，支持 Snell v4/v5
+#       避免宿主机兼容性问题，支持 Snell v4/v5/v6
 # =========================================
 
 # --- 定义颜色代码 ---
@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 RESET='\033[0m'
 
 # --- 脚本版本号 ---
-current_version="1.0"
+current_version="1.1"
 
 # --- 全局变量 ---
 SNELL_VERSION_CHOICE=""
@@ -83,14 +83,16 @@ select_snell_version() {
     echo -e "${CYAN}请选择要安装的 Snell 版本：${RESET}"
     echo -e "${GREEN}1.${RESET} Snell v4"
     echo -e "${GREEN}2.${RESET} Snell v5"
-    
+    echo -e "${GREEN}3.${RESET} Snell v6 (Beta)"
+
     while true; do
-        printf "请输入选项 [1-2]: "
+        printf "请输入选项 [1-3]: "
         read -r version_choice
         case "$version_choice" in
             1) SNELL_VERSION_CHOICE="v4"; echo -e "${GREEN}已选择 Snell v4${RESET}"; break ;;
             2) SNELL_VERSION_CHOICE="v5"; echo -e "${GREEN}已选择 Snell v5${RESET}"; break ;;
-            *) echo -e "${RED}请输入正确的选项 [1-2]${RESET}" ;;
+            3) SNELL_VERSION_CHOICE="v6"; echo -e "${GREEN}已选择 Snell v6 (Beta)${RESET}"; echo -e "${YELLOW}注意：v6 为 Beta 版本，协议可能存在不兼容更新${RESET}"; break ;;
+            *) echo -e "${RED}请输入正确的选项 [1-3]${RESET}" ;;
         esac
     done
 }
@@ -110,13 +112,20 @@ get_latest_snell_v5_version() {
     if [ -z "$v5_release" ]; then
         v5_release=$(curl -s https://kb.nssurge.com/surge-knowledge-base/zh/release-notes/snell | grep -o 'snell-server-v5\.[0-9]\+\.[0-9]\+[a-z0-9]*' | grep -v b | head -n 1 | sed 's/snell-server-v//')
     fi
-    if [ -n "$v5_release" ]; then echo "v${v5_release}"; else echo "v5.0.0"; fi
+    if [ -n "$v5_release" ]; then echo "v${v5_release}"; else echo "v5.0.1"; fi
+}
+
+get_latest_snell_v6_version() {
+    v6_ver=$(curl -s https://kb.nssurge.com/surge-knowledge-base/release-notes/snell | grep -o 'snell-server-v6\.[0-9]\+\.[0-9]\+[a-z0-9]*' | head -n 1 | sed 's/snell-server-v//')
+    if [ -n "$v6_ver" ]; then echo "v${v6_ver}"; else echo "v6.0.0b2"; fi
 }
 
 get_latest_snell_version() {
-    if [ "$SNELL_VERSION_CHOICE" = "v5" ]; then 
+    if [ "$SNELL_VERSION_CHOICE" = "v6" ]; then
+        SNELL_VERSION=$(get_latest_snell_v6_version)
+    elif [ "$SNELL_VERSION_CHOICE" = "v5" ]; then
         SNELL_VERSION=$(get_latest_snell_v5_version)
-    else 
+    else
         SNELL_VERSION=$(get_latest_snell_v4_version)
     fi
     echo -e "${GREEN}获取到版本: ${SNELL_VERSION}${RESET}"
@@ -128,8 +137,13 @@ get_snell_download_url() {
     case ${arch} in
         "x86_64"|"amd64") arch_suffix="amd64" ;;
         "aarch64"|"arm64") arch_suffix="aarch64" ;;
-        "armv7l"|"armv7") arch_suffix="armv7l" ;;
-        *) echo -e "${RED}不支持的架构: ${arch}${RESET}"; exit 1 ;;
+        "armv7l"|"armv7")
+            if [ "$SNELL_VERSION_CHOICE" = "v6" ]; then
+                echo -e "${RED}Snell v6 暂不支持 armv7l 架构${RESET}" >&2
+                exit 1
+            fi
+            arch_suffix="armv7l" ;;
+        *) echo -e "${RED}不支持的架构: ${arch}${RESET}" >&2; exit 1 ;;
     esac
     echo "https://dl.nssurge.com/snell/snell-server-${SNELL_VERSION}-linux-${arch_suffix}.zip"
 }
@@ -229,6 +243,7 @@ create_config_file() {
 [snell-server]
 listen = 0.0.0.0:${PORT}
 psk = ${psk}
+version-choice = ${SNELL_VERSION_CHOICE}
 EOF
     else
         cat > ./snell-config/snell-server.conf << EOF
@@ -237,6 +252,7 @@ listen = 0.0.0.0:${PORT}
 psk = ${psk}
 ipv6 = true
 tfo = true
+version-choice = ${SNELL_VERSION_CHOICE}
 EOF
     fi
 
@@ -363,6 +379,14 @@ install_snell() {
     fi
     
     select_snell_version
+
+    # v6 不支持 armv7l
+    local _arch=$(uname -m)
+    if [ "$SNELL_VERSION_CHOICE" = "v6" ] && { [ "$_arch" = "armv7l" ] || [ "$_arch" = "armv7" ]; }; then
+        echo -e "${RED}Snell v6 暂不支持 armv7l 架构，请选择 v4 或 v5。${RESET}"
+        return 1
+    fi
+
     get_latest_snell_version
     get_user_port
     
@@ -503,10 +527,16 @@ network_diagnosis() {
     
     # 读取配置
     local port=$(grep 'listen' /etc/snell-docker/snell-server.conf | sed 's/.*://')
-    local psk=$(grep 'psk' /etc/snell-docker/snell-server.conf | sed 's/psk\s*=\s*//')
-    local version_choice="v4"
-    if docker images "${IMAGE_NAME}" --format '{{.Tag}}' 2>/dev/null | grep -q 'v5'; then
-        version_choice="v5"
+    local psk=$(grep 'psk' /etc/snell-docker/snell-server.conf | sed 's/psk[[:space:]]*=[[:space:]]*//')
+    local version_choice
+    version_choice=$(grep 'version-choice' /etc/snell-docker/snell-server.conf 2>/dev/null | sed 's/version-choice[[:space:]]*=[[:space:]]*//')
+    if [ -z "$version_choice" ]; then
+        version_choice="v4"
+        if docker images "${IMAGE_NAME}" --format '{{.Tag}}' 2>/dev/null | grep -q 'v6'; then
+            version_choice="v6"
+        elif docker images "${IMAGE_NAME}" --format '{{.Tag}}' 2>/dev/null | grep -q 'v5'; then
+            version_choice="v5"
+        fi
     fi
     
     echo -e "${YELLOW}📋 服务配置信息:${RESET}"
@@ -836,7 +866,9 @@ network_diagnosis() {
     echo -e "${CYAN}6️⃣  客户端配置检查...${RESET}"
     if [ -n "$server_ip" ]; then
         echo -e "   ${GREEN}Surge 配置:${RESET}"
-        if [ "$version_choice" = "v5" ]; then
+        if [ "$version_choice" = "v6" ]; then
+            echo "   MySnell = snell, $server_ip, $port, psk=$psk, version=6, reuse=true, tfo=true"
+        elif [ "$version_choice" = "v5" ]; then
             echo "   MySnell_v4 = snell, $server_ip, $port, psk=$psk, version=4, reuse=true, tfo=true"
             echo "   MySnell_v5 = snell, $server_ip, $port, psk=$psk, version=5, reuse=true, tfo=true"
         else
@@ -1018,11 +1050,16 @@ show_information() {
     fi
     
     local port=$(grep 'listen' /etc/snell-docker/snell-server.conf | sed 's/.*://')
-    local psk=$(grep 'psk' /etc/snell-docker/snell-server.conf | sed 's/psk\s*=\s*//')
-    # 通过镜像tag判断版本
-    local version_choice="v4"
-    if docker images "${IMAGE_NAME}" --format '{{.Tag}}' 2>/dev/null | grep -q 'v5'; then
-        version_choice="v5"
+    local psk=$(grep 'psk' /etc/snell-docker/snell-server.conf | sed 's/psk[[:space:]]*=[[:space:]]*//')
+    local version_choice
+    version_choice=$(grep 'version-choice' /etc/snell-docker/snell-server.conf 2>/dev/null | sed 's/version-choice[[:space:]]*=[[:space:]]*//')
+    if [ -z "$version_choice" ]; then
+        version_choice="v4"
+        if docker images "${IMAGE_NAME}" --format '{{.Tag}}' 2>/dev/null | grep -q 'v6'; then
+            version_choice="v6"
+        elif docker images "${IMAGE_NAME}" --format '{{.Tag}}' 2>/dev/null | grep -q 'v5'; then
+            version_choice="v5"
+        fi
     fi
     
     # 获取服务器 IP
@@ -1037,7 +1074,9 @@ show_information() {
     if [ -n "$ipv4_addr" ]; then
         local ip_country_ipv4=$(curl -s --connect-timeout 5 "http://ipinfo.io/${ipv4_addr}/country" 2>/dev/null)
         echo -e "${GREEN}--- IPv4 Surge 配置 (Snell ${version_choice}) ---${RESET}"
-        if [ "$version_choice" = "v5" ]; then
+        if [ "$version_choice" = "v6" ]; then
+            echo -e "${GREEN}${ip_country_ipv4} = snell, ${ipv4_addr}, ${port}, psk=${psk}, version=6, reuse=true, tfo=true${RESET}"
+        elif [ "$version_choice" = "v5" ]; then
             echo -e "${GREEN}${ip_country_ipv4}_v4 = snell, ${ipv4_addr}, ${port}, psk=${psk}, version=4, reuse=true, tfo=true${RESET}"
             echo -e "${GREEN}${ip_country_ipv4}_v5 = snell, ${ipv4_addr}, ${port}, psk=${psk}, version=5, reuse=true, tfo=true${RESET}"
         else
@@ -1048,7 +1087,9 @@ show_information() {
     if [ -n "$ipv6_addr" ]; then
         local ip_country_ipv6=$(curl -s --connect-timeout 5 "https://ipapi.co/${ipv6_addr}/country/" 2>/dev/null)
         echo -e "\n${GREEN}--- IPv6 Surge 配置 (Snell ${version_choice}) ---${RESET}"
-        if [ "$version_choice" = "v5" ]; then
+        if [ "$version_choice" = "v6" ]; then
+            echo -e "${GREEN}${ip_country_ipv6} = snell, ${ipv6_addr}, ${port}, psk=${psk}, version=6, reuse=true, tfo=true${RESET}"
+        elif [ "$version_choice" = "v5" ]; then
             echo -e "${GREEN}${ip_country_ipv6}_v4 = snell, ${ipv6_addr}, ${port}, psk=${psk}, version=4, reuse=true, tfo=true${RESET}"
             echo -e "${GREEN}${ip_country_ipv6}_v5 = snell, ${ipv6_addr}, ${port}, psk=${psk}, version=5, reuse=true, tfo=true${RESET}"
         else

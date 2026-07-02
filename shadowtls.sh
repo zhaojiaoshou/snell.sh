@@ -39,20 +39,23 @@ install_requirements() {
 }
 
 # 获取最新版本
+SHADOWTLS_FALLBACK_VERSION="v0.2.25"
+
 get_latest_version() {
     local latest_version=""
 
     # 优先走 API；失败时 jq 可能返回 "null"
-    latest_version=$(curl -fsSL "https://api.github.com/repos/ihciah/shadow-tls/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null)
+    latest_version=$(curl -fsSL --connect-timeout 10 "https://api.github.com/repos/ihciah/shadow-tls/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null)
 
     # API 异常（如限流）时，回退到 releases/latest 的重定向结果
     if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
-        latest_version=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/ihciah/shadow-tls/releases/latest" 2>/dev/null | sed -E 's#.*/tag/##')
+        latest_version=$(curl -fsSL --connect-timeout 10 -o /dev/null -w '%{url_effective}' "https://github.com/ihciah/shadow-tls/releases/latest" 2>/dev/null | sed -E 's#.*/tag/##')
     fi
 
+    # 两次均失败时，使用内置的已知可用版本
     if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
-        echo -e "${RED}获取最新版本失败${RESET}"
-        exit 1
+        echo -e "${YELLOW}无法从 GitHub 获取最新版本，使用内置版本 ${SHADOWTLS_FALLBACK_VERSION}${RESET}" >&2
+        latest_version="$SHADOWTLS_FALLBACK_VERSION"
     fi
 
     echo "$latest_version"
@@ -526,31 +529,49 @@ install_shadowtls() {
     # 获取系统架构并下载安装 ShadowTLS
     arch=$(uname -m)
     case $arch in
-        x86_64)
+        x86_64|amd64)
             arch="x86_64-unknown-linux-musl"
             ;;
-        aarch64)
+        aarch64|arm64)
             arch="aarch64-unknown-linux-musl"
+            ;;
+        armv7l|armv7)
+            arch="armv7-unknown-linux-musleabihf"
+            ;;
+        arm)
+            arch="arm-unknown-linux-musleabi"
             ;;
         *)
             echo -e "${RED}不支持的系统架构: $arch${RESET}"
             exit 1
             ;;
     esac
-    
+
     # 获取最新版本
     version=$(get_latest_version)
-    if [ -z "$version" ] || [ "$version" = "null" ]; then
-        echo -e "${RED}无法解析 ShadowTLS 版本号，安装中止${RESET}"
-        exit 1
+
+    # 尝试下载：先直连 GitHub，失败则走 ghproxy 镜像
+    binary_name="shadow-tls-${arch}"
+    github_url="https://github.com/ihciah/shadow-tls/releases/download/${version}/${binary_name}"
+    proxy_url="https://ghproxy.com/${github_url}"
+
+    echo -e "${CYAN}正在下载 ShadowTLS ${version} (${arch})...${RESET}"
+    echo -e "${YELLOW}下载地址: ${github_url}${RESET}"
+
+    if ! wget --timeout=30 --tries=2 -q "$github_url" -O "/tmp/shadow-tls.tmp" 2>/dev/null; then
+        echo -e "${YELLOW}直连 GitHub 失败，尝试使用镜像下载...${RESET}"
+        echo -e "${YELLOW}镜像地址: ${proxy_url}${RESET}"
+        if ! wget --timeout=60 --tries=3 "$proxy_url" -O "/tmp/shadow-tls.tmp"; then
+            echo -e "${RED}下载 ShadowTLS 失败，请检查网络连接后重试${RESET}"
+            rm -f "/tmp/shadow-tls.tmp"
+            exit 1
+        fi
     fi
-    
-    # 下载并安装
-    download_url="https://github.com/ihciah/shadow-tls/releases/download/${version}/shadow-tls-${arch}"
-    wget "$download_url" -O "/tmp/shadow-tls.tmp"
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}下载 ShadowTLS 失败${RESET}"
+
+    # 验证下载的文件不为空
+    if [ ! -s "/tmp/shadow-tls.tmp" ]; then
+        echo -e "${RED}下载文件为空，请重试${RESET}"
+        rm -f "/tmp/shadow-tls.tmp"
         exit 1
     fi
     

@@ -144,6 +144,24 @@ View the generated ShadowTLS password:
 cat ./snell-config/shadowtls-password
 ```
 
+Client settings:
+
+| Item | Value |
+|------|-------|
+| Server | VPS public IP or domain |
+| Port | ShadowTLS public port, `8443` in the example |
+| Snell version | `5` |
+| Snell PSK | The `psk` value in `./snell-config/snell-server.conf` |
+| ShadowTLS password | The content of `./snell-config/shadowtls-password`, or the manually supplied `SHADOWTLS_PASSWORD` |
+| ShadowTLS SNI | `SHADOWTLS_SNI`, default `www.microsoft.com` |
+
+View the client secrets:
+
+```bash
+grep '^psk' ./snell-config/snell-server.conf
+cat ./snell-config/shadowtls-password
+```
+
 Surge example:
 
 ```text

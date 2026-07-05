@@ -143,6 +143,23 @@ docker run -d --name snell-shadowtls \
 cat ./snell-config/shadowtls-password
 ```
 
+客户端填写：
+
+| 项目 | 填写内容 |
+|------|----------|
+| 服务器 | VPS 公网 IP 或域名 |
+| 端口 | ShadowTLS 对外端口，示例为 `8443` |
+| Snell 版本 | `5` |
+| Snell PSK | `./snell-config/snell-server.conf` 里的 `psk` |
+| ShadowTLS 密码 | `./snell-config/shadowtls-password` 的内容，或手动传入的 `SHADOWTLS_PASSWORD` |
+| ShadowTLS SNI | `SHADOWTLS_SNI`，默认 `www.microsoft.com` |
+
+查看客户端需要的密钥：
+```bash
+grep '^psk' ./snell-config/snell-server.conf
+cat ./snell-config/shadowtls-password
+```
+
 Surge 示例：
 ```text
 HK = snell, 服务器IP, 8443, psk = your_16_plus_char_psk, version = 5, reuse = true, tfo = true, shadow-tls-password = your_shadowtls_password, shadow-tls-sni = www.microsoft.com, shadow-tls-version = 3

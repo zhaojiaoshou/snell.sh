@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 RESET='\033[0m'
 
 # --- 脚本版本号 ---
-current_version="1.1"
+current_version="1.2"
 
 # --- 全局变量 ---
 SNELL_VERSION_CHOICE=""

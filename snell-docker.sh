@@ -117,7 +117,7 @@ get_latest_snell_v5_version() {
 
 get_latest_snell_v6_version() {
     v6_ver=$(curl -s https://kb.nssurge.com/surge-knowledge-base/release-notes/snell | grep -o 'snell-server-v6\.[0-9]\+\.[0-9]\+[a-z0-9]*' | head -n 1 | sed 's/snell-server-v//')
-    if [ -n "$v6_ver" ]; then echo "v${v6_ver}"; else echo "v6.0.0b2"; fi
+    if [ -n "$v6_ver" ]; then echo "v${v6_ver}"; else echo "v6.0.0b4"; fi
 }
 
 get_latest_snell_version() {

@@ -145,7 +145,7 @@ get_latest_snell_v6_version() {
     if [ -n "$v6_ver" ]; then
         echo "v${v6_ver}"
     else
-        echo "v6.0.0b2"
+        echo "v6.0.0b4"
     fi
 }
 
@@ -715,7 +715,7 @@ get_current_snell_version() {
             CURRENT_VERSION=$(${INSTALL_DIR}/snell-server --v 2>&1 | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+[a-z0-9]*')
             if [ -z "$CURRENT_VERSION" ]; then
                 if [ "$current_installed_version" = "v6" ]; then
-                    CURRENT_VERSION="v6.0.0b2"
+                    CURRENT_VERSION="v6.0.0b4"
                 else
                     CURRENT_VERSION="v5.0.1"
                 fi

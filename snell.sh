@@ -690,6 +690,23 @@ get_dns() {
     fi
 }
 
+# 是否启用 IPv6
+get_ipv6_choice() {
+    IPV6_ENABLE="true"
+    LISTEN_ADDR="::0"
+    read -rp "是否启用 IPv6? [Y/n]: " ipv6_choice
+    case "$ipv6_choice" in
+        [nN]|[nN][oO])
+            IPV6_ENABLE="false"
+            LISTEN_ADDR="0.0.0.0"
+            echo -e "${GREEN}已关闭 IPv6，仅监听 IPv4${RESET}"
+            ;;
+        *)
+            echo -e "${GREEN}已启用 IPv6${RESET}"
+            ;;
+    esac
+}
+
 # 是否启用 Snell v5/v6 出口控制
 get_egress_feature_choice() {
     EGRESS_FEATURE_ENABLED="false"
@@ -1236,6 +1253,7 @@ install_snell() {
 
     get_user_port  # 获取用户输入的端口
     get_dns # 获取用户输入的 DNS 服务器
+    get_ipv6_choice # 是否启用 IPv6
     get_egress_feature_choice
     get_egress_settings
     check_egress_dependencies
@@ -1247,9 +1265,9 @@ install_snell() {
     # 将主用户配置存储在 users 目录下
     cat > ${SNELL_CONF_FILE} << EOF
 [snell-server]
-listen = ::0:${PORT}
+listen = ${LISTEN_ADDR}:${PORT}
 psk = ${PSK}
-ipv6 = true
+ipv6 = ${IPV6_ENABLE}
 dns = ${DNS}
 EOF
 

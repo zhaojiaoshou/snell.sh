@@ -290,14 +290,21 @@ add_user() {
     # 获取 DNS 设置
     get_dns
     
-    # 创建用户配置文件
+    # 创建用户配置文件（IPv6 设置跟随主配置）
     ensure_snell_service_user
+    local ipv6_enable="true"
+    local listen_addr="::0"
+    local main_conf="${SNELL_CONF_DIR}/users/snell-main.conf"
+    if [ -f "$main_conf" ] && grep -Eq '^[[:space:]]*ipv6[[:space:]]*=[[:space:]]*false' "$main_conf"; then
+        ipv6_enable="false"
+        listen_addr="0.0.0.0"
+    fi
     local user_conf="${SNELL_CONF_DIR}/users/snell-${PORT}.conf"
     cat > "$user_conf" << EOF
 [snell-server]
-listen = ::0:${PORT}
+listen = ${listen_addr}:${PORT}
 psk = ${PSK}
-ipv6 = true
+ipv6 = ${ipv6_enable}
 dns = ${DNS}
 EOF
     
@@ -416,7 +423,7 @@ modify_user() {
                 systemctl stop "$service_name"
                 
                 # 修改配置文件中的端口
-                sed -i "s/listen = ::0:${mod_port}/listen = ::0:${new_port}/" "$user_conf"
+                sed -i "s/\(listen = .*:\)${mod_port}/\1${new_port}/" "$user_conf"
                 
                 # 重命名配置文件和服务
                 mv "$user_conf" "${SNELL_CONF_DIR}/users/snell-${new_port}.conf"

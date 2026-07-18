@@ -742,6 +742,19 @@ generate_snell_links() {
     fi
 }
 
+# 启用 TCP Fast Open
+enable_tcp_fastopen() {
+    # 立即生效
+    sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1
+
+    # 持久化配置，重启后仍然生效
+    if [ -d /etc/sysctl.d ]; then
+        echo "net.ipv4.tcp_fastopen = 3" > /etc/sysctl.d/99-tcp-fastopen.conf
+    elif ! grep -q "^net.ipv4.tcp_fastopen" /etc/sysctl.conf 2>/dev/null; then
+        echo "net.ipv4.tcp_fastopen = 3" >> /etc/sysctl.conf
+    fi
+}
+
 # 创建服务文件的模板
 create_shadowtls_service() {
     local service_type=$1  # ss 或 snell
@@ -762,7 +775,10 @@ create_shadowtls_service() {
         description="Shadow-TLS Server Service for Snell (Port: ${port})"
         identifier="shadow-tls-snell-${port}"
     fi
-    
+
+    # 启用 TCP Fast Open（内核参数）
+    enable_tcp_fastopen
+
     cat > "$service_file" << EOF
 [Unit]
 Description=${description}
@@ -776,7 +792,7 @@ User=root
 Group=root
 Environment=RUST_BACKTRACE=1
 Environment=RUST_LOG=info
-ExecStart=/usr/local/bin/shadow-tls --v3 server --listen ::0:${listen_port} --server 127.0.0.1:${port} --tls ${tls_domain} --password ${password}
+ExecStart=/usr/local/bin/shadow-tls --fastopen --v3 server --listen ::0:${listen_port} --server 127.0.0.1:${port} --tls ${tls_domain} --password ${password}
 StandardOutput=append:/var/log/shadowtls-${identifier}.log
 StandardError=append:/var/log/shadowtls-${identifier}.log
 SyslogIdentifier=${identifier}
